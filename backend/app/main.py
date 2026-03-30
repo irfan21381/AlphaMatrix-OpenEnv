@@ -20,13 +20,37 @@ def health():
     return {"status": "healthy"}
 
 
-# 🔥 INITIALIZE (FINAL FIX)
+# 🔥 RESET (🚨 REQUIRED FOR OPENENV)
+@app.post("/reset")
+def reset():
+    global env
+
+    env = IncidentEnv()
+
+    state = env.initialize({
+        "issue": "overheating",
+        "cpu": 85,
+        "battery": 30,
+        "context": "normal_use",
+        "apps_running": 8
+    })
+
+    # clear memory
+    history.clear()
+    reward_history.clear()
+    action_history.clear()
+    context_memory.clear()
+
+    return {
+        "status": "reset_success",
+        "state": state
+    }
+
+
+# 🔥 INITIALIZE
 @app.post("/initialize")
 def initialize(data: dict):
     try:
-        print("🔥 INIT DATA:", data)
-
-        # ✅ FIX: SUPPORT BOTH KEYS
         apps_running = data.get("apps_running") or data.get("apps", 5)
 
         safe_data = {
@@ -37,16 +61,8 @@ def initialize(data: dict):
             "apps_running": int(apps_running),
         }
 
-        # 🚀 INIT ENV
         state = env.initialize(safe_data)
 
-        # ✅ SAFETY (VERY IMPORTANT)
-        if state is None:
-            state = safe_data  # fallback
-
-        print("✅ STATE:", state)
-
-        # RESET MEMORY
         history.clear()
         reward_history.clear()
         action_history.clear()
@@ -55,9 +71,6 @@ def initialize(data: dict):
         return {"status": "success", "state": state}
 
     except Exception as e:
-        print("❌ INIT ERROR:", str(e))
-
-        # 🔥 NEVER FAIL HARD — RETURN SAFE STATE
         return {
             "status": "fallback",
             "state": {
@@ -72,14 +85,11 @@ def initialize(data: dict):
 @app.post("/step")
 def step(action: dict):
     try:
-        print("⚡ STEP INPUT:", action)
-
         action_type = action.get("action_type") or action.get("action")
 
         if not action_type:
             raise ValueError("Missing action_type")
 
-        # ❗ CHECK INIT
         current_state = env.get_state()
         if current_state is None:
             raise ValueError("Environment not initialized")
@@ -87,9 +97,6 @@ def step(action: dict):
         prev_cpu = current_state.get("cpu", 0)
 
         state, reward, done, info = env.step({"action_type": action_type})
-
-        if state is None:
-            raise ValueError("Env returned None state")
 
         cpu = state.get("cpu", 0)
 
@@ -121,6 +128,7 @@ def step(action: dict):
             "status": "success",
             "observation": state,
             "reward": reward,
+            "done": done,
             "reason": reason,
             "impact": {
                 "cpu_before": prev_cpu,
@@ -131,22 +139,23 @@ def step(action: dict):
         }
 
     except Exception as e:
-        print("❌ STEP ERROR:", str(e))
         return JSONResponse(content={"error": str(e)}, status_code=400)
 
 
-# 📊 STATUS
+# 📊 STATUS (🔥 UPDATED WITH RESOLVED)
 @app.get("/status")
 def system_status():
     state = env.get_state() or {}
     cpu = state.get("cpu", 0)
 
-    if cpu > 85:
-        level = "critical"
-    elif cpu > 70:
+    if cpu < 40:
+        level = "resolved"
+    elif cpu < 70:
+        level = "stable"
+    elif cpu < 85:
         level = "warning"
     else:
-        level = "stable"
+        level = "critical"
 
     return {"cpu": cpu, "status": level}
 
